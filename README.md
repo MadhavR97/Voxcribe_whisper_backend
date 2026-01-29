@@ -67,7 +67,7 @@ git push origin main
    - Configure:
      - Name: `voxcribe-backend`
      - Environment: Node
-     - Build Command: `npm install && apt-get update && apt-get install -y ffmpeg`
+     - Build Command: `npm install`
      - Start Command: `npm start`
      - Environment Variables:
        ```
