@@ -50,7 +50,35 @@ npm start
 - `GET /health` - Health check
 
 ## Deployment
-See `DEPLOYMENT_GUIDE.md` for Render deployment instructions.
+
+### Render Deployment Steps:
+
+1. **Push latest changes to GitHub**:
+```bash
+git add .
+git commit -m "Add Render deployment config"
+git push origin main
+```
+
+2. **Deploy to Render**:
+   - Go to [Render Dashboard](https://dashboard.render.com/)
+   - Click "New+" → "Web Service"
+   - Connect your GitHub repository
+   - Configure:
+     - Name: `voxcribe-backend`
+     - Environment: Node
+     - Build Command: `npm install && apt-get update && apt-get install -y ffmpeg`
+     - Start Command: `npm start`
+     - Environment Variables:
+       ```
+       NODE_ENV=production
+       FRONTEND_URL=https://your-vercel-frontend.vercel.app
+       ```
+
+3. **Important Notes**:
+   - The build command installs Linux ffmpeg (required for audio processing)
+   - Update `FRONTEND_URL` with your actual Vercel frontend URL after deploying frontend
+   - Render will automatically detect and use `render.yaml` if present
 
 ## Environment Variables
 ```env
