@@ -72,7 +72,7 @@ git push origin main
      - Environment Variables:
        ```
        NODE_ENV=production
-       FRONTEND_URL=https://your-vercel-frontend.vercel.app
+       FRONTEND_URL=https://voxcribe-two.vercel.app
        ```
 
 3. **Important Notes**:
