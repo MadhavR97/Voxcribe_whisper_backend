@@ -106,7 +106,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     }
 
     // Get paths for executables (try whisper.exe then main.exe on Windows)
-    const modelPath = getWhisperModelPath();
+    const modelPath = getWhisperModelPath(); // This should now return ggml-base.bin
     const ffmpegPath = getFFmpegPath();
     console.log(`Using FFmpeg path: ${ffmpegPath}`);
 
@@ -146,7 +146,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     }
 
     if (!isModelAvailableSync()) {
-      console.log('Whisper model not found. Attempting to download ggml-small.bin...');
+      console.log('Whisper model not found. Attempting to download ggml-base.bin...');
 
       try {
         const modelPath = require('./utils/whisperInstaller').getWhisperModelPath();
@@ -157,8 +157,9 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
         // Download the actual model file
         const axios = require('axios');
 
-        // Try to download the ggml-small.bin model
-        const modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin';
+        // Changed to ggml-base.bin (approx 140MB) instead of ggml-small.bin (approx 480MB)
+        // to prevent Out-Of-Memory errors on restricted hosting environments
+        const modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin';
         const writer = fsSync.createWriteStream(modelPath);
 
         const response = await axios({
@@ -178,9 +179,9 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       } catch (modelError) {
         console.error('Error downloading model:', modelError);
         return res.status(500).json({
-          error: "Whisper model not found and download failed. Please download ggml-small.bin manually.\n" +
-            "Download from https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin\n" +
-            "Save as models/ggml-small.bin"
+          error: "Whisper model not found and download failed. Please download ggml-base.bin manually.\n" +
+            "Download from https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin\n" +
+            "Save as models/ggml-base.bin"
         });
       }
     }

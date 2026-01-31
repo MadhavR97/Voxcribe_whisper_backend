@@ -59,7 +59,8 @@ function getWhisperBinaryPathCandidates() {
 }
 
 function getWhisperModelPath() {
-  return path.join(PROJECT_ROOT, 'models', 'ggml-small.bin');
+  // Switch to 'base' model (~140MB) instead of 'small' (~480MB) to avoid OOM on standard cloud instances
+  return path.join(PROJECT_ROOT, 'models', 'ggml-base.bin');
 }
 
 function isWhisperInstalledSync() {
