@@ -7,16 +7,12 @@ const https = require('https');
 const PROJECT_ROOT = process.cwd();
 
 function getBinDir() {
-  const backendPath = path.join(PROJECT_ROOT, 'backend');
-  if (fs.existsSync(backendPath)) return path.join(backendPath, 'bin');
+  // Always check root bin first in this flat structure
   return path.join(PROJECT_ROOT, 'bin');
 }
 
 /**
  * Returns the path to the FFmpeg binary.
- * 1. Checks for local binary in bin/ folder.
- * 2. Checks for global 'ffmpeg' command in PATH.
- * 3. Returns local path as fallback (for installation target).
  */
 function getFFmpegPath() {
   const binDir = getBinDir();
@@ -33,16 +29,14 @@ function getFFmpegPath() {
     execSync(cmd, { stdio: 'ignore' });
     return 'ffmpeg';
   } catch (e) {
-    // 3. Default to local path (for installation target)
+    // 3. Default to local path
     return localPath;
   }
 }
 
 function isFFmpegInstalledSync() {
   const p = getFFmpegPath();
-  // If 'ffmpeg' is returned, it means it was found in PATH
   if (p === 'ffmpeg') return true;
-  // Otherwise check if the specific file exists
   return fs.existsSync(p);
 }
 
@@ -52,24 +46,19 @@ function downloadFile(url, dest) {
     const request = https.get(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
     }, (response) => {
-      // Handle Redirects
       if ([301, 302, 307, 308].includes(response.statusCode)) {
         downloadFile(response.headers.location, dest).then(resolve).catch(reject);
         return;
       }
-
       if (response.statusCode !== 200) {
         reject(new Error(`Failed to download: ${response.statusCode}`));
         return;
       }
-
       response.pipe(file);
-
       file.on('finish', () => {
         file.close(() => resolve());
       });
     });
-
     request.on('error', (err) => {
       fs.unlink(dest, () => {});
       reject(err);
@@ -110,11 +99,12 @@ async function installFFmpeg() {
       try {
         execSync(`tar -xJf "${tarPath}" -C "${binDir}" --strip-components=1 --wildcards "*/ffmpeg"`, { stdio: 'inherit' });
       } catch (e) {
-        console.log('[FFmpeg] Wildcard extraction failed, extracting all...');
         execSync(`tar -xJf "${tarPath}" -C "${binDir}" --strip-components=1`, { stdio: 'inherit' });
       }
 
       if (fs.existsSync(tarPath)) fs.unlinkSync(tarPath);
+      const ffPath = path.join(binDir, 'ffmpeg');
+      if (fs.existsSync(ffPath)) fs.chmodSync(ffPath, 0o755);
       console.log('[FFmpeg] Installation complete.');
 
     } else if (platform === 'win32') {
@@ -133,14 +123,11 @@ async function installFFmpeg() {
         fs.copyFileSync(ffmpegSource, path.join(binDir, 'ffmpeg.exe'));
         console.log('[FFmpeg] Installed successfully.');
       } else {
-        throw new Error('ffmpeg.exe not found in downloaded archive');
+        throw new Error('ffmpeg.exe not found');
       }
 
       if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
       if (fs.existsSync(extractPath)) fs.rmSync(extractPath, { recursive: true, force: true });
-      
-    } else {
-      console.log('[FFmpeg] Auto-install not supported for this platform. Please install manually.');
     }
   } catch (error) {
     console.error('[FFmpeg] Installation failed:', error.message);
