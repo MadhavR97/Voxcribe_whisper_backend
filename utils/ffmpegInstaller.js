@@ -1,4 +1,3 @@
-// Implementation of ffmpegInstaller for backend
 const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
@@ -6,11 +5,16 @@ const os = require('os');
 const { exec } = require('child_process');
 const https = require('https');
 
-// Get FFmpeg path based on platform
+// Helper to get the absolute path to the backend root
+const BACKEND_ROOT = process.cwd();
+
+/**
+ * Get FFmpeg path based on platform.
+ * It looks for the /bin folder in the root of the backend directory.
+ */
 function getFFmpegPath() {
   const platform = os.platform();
-  // Assuming this file is in a subdirectory (e.g., utils/), go up one level to backend root, then into bin
-  const binDir = path.resolve(__dirname, '..', 'bin');
+  const binDir = path.join(BACKEND_ROOT, 'bin');
   
   if (platform === 'win32') {
     return path.join(binDir, 'ffmpeg.exe');
@@ -21,98 +25,86 @@ function getFFmpegPath() {
   }
 }
 
-// Check if FFmpeg is installed
 async function isFFmpegInstalled() {
   try {
     const ffmpegPath = getFFmpegPath();
-    await fsPromises.access(ffmpegPath);
+    await fsPromises.access(ffmpegPath, fs.constants.F_OK);
     return true;
   } catch {
     return false;
   }
 }
 
-// Check if FFmpeg is installed synchronously
 function isFFmpegInstalledSync() {
   try {
     const ffmpegPath = getFFmpegPath();
-    require('fs').accessSync(ffmpegPath);
+    fs.accessSync(ffmpegPath, fs.constants.F_OK);
     return true;
   } catch {
     return false;
   }
 }
 
-// Robust file downloader with progress bar and redirect support
+/**
+ * Downloads a file with a progress bar in the console
+ */
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
     const options = {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' // Prevent 403 blocks from some servers
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) VoxScribe/1.0' }
     };
 
     const request = https.get(url, options, (response) => {
-      // Handle Redirects (301, 302, 307, 308)
+      // Handle Redirects
       if ([301, 302, 307, 308].includes(response.statusCode)) {
-        downloadFile(response.headers.location, dest)
-          .then(resolve)
-          .catch(reject);
-        return;
+        return downloadFile(response.headers.location, dest).then(resolve).catch(reject);
       }
 
       if (response.statusCode !== 200) {
-        reject(new Error(`Failed to download. Status Code: ${response.statusCode}`));
-        return;
+        return reject(new Error(`Download failed: ${response.statusCode}`));
       }
 
       const totalSize = parseInt(response.headers['content-length'], 10);
+      let downloadedSize = 0;
       const file = fs.createWriteStream(dest);
-      let downloaded = 0;
-      let lastLoggedTime = 0;
-      
+
       response.on('data', (chunk) => {
-        downloaded += chunk.length;
-        const now = Date.now();
+        downloadedSize += chunk.length;
         
-        // Log progress every 1 second
-        if (now - lastLoggedTime > 1000) {
-            const mb = (downloaded / 1024 / 1024).toFixed(1);
-            if (totalSize) {
-                const totalMb = (totalSize / 1024 / 1024).toFixed(1);
-                const percent = ((downloaded / totalSize) * 100).toFixed(0);
-                process.stdout.write(`Downloading... ${percent}% (${mb} / ${totalMb} MB)\r`);
-            } else {
-                process.stdout.write(`Downloading... ${mb} MB\r`);
-            }
-            lastLoggedTime = now;
+        if (totalSize) {
+          const percent = ((downloadedSize / totalSize) * 100).toFixed(2);
+          const mbDownloaded = (downloadedSize / (1024 * 1024)).toFixed(2);
+          const mbTotal = (totalSize / (1024 * 1024)).toFixed(2);
+          process.stdout.write(`  > Downloading FFmpeg: ${percent}% (${mbDownloaded}/${mbTotal} MB)\r`);
+        } else {
+          const mbDownloaded = (downloadedSize / (1024 * 1024)).toFixed(2);
+          process.stdout.write(`  > Downloading FFmpeg: ${mbDownloaded} MB...\r`);
         }
       });
 
+      response.pipe(file);
+
       file.on('finish', () => {
-        process.stdout.write('\n'); // Clear line
-        file.close(() => resolve());
+        process.stdout.write('\n'); // Move to next line after progress is done
+        file.close();
+        resolve();
       });
 
       file.on('error', (err) => {
-        fs.unlink(dest, () => {}); // Clean up partial file
+        fs.unlink(dest, () => {});
         reject(err);
       });
-
-      response.pipe(file);
     });
 
     request.on('error', (err) => {
-      fs.unlink(dest, () => {}); // Clean up partial file
+      fs.unlink(dest, () => {});
       reject(err);
     });
   });
 }
 
-// Recursively find a file in a directory
 async function findFileRecursively(dir, filename) {
   const items = await fsPromises.readdir(dir, { withFileTypes: true });
-  
   for (const item of items) {
     const fullPath = path.join(dir, item.name);
     if (item.isFile() && item.name.toLowerCase() === filename.toLowerCase()) {
@@ -125,99 +117,59 @@ async function findFileRecursively(dir, filename) {
   return null;
 }
 
-// Download and install FFmpeg for Windows
 async function downloadFFmpegWindows() {
-  const binDir = path.resolve(__dirname, '..', 'bin');
+  const binDir = path.join(BACKEND_ROOT, 'bin');
   const zipPath = path.join(binDir, 'ffmpeg.zip');
   const extractPath = path.join(binDir, 'temp_extract');
   
-  // Use a reliable GitHub release ZIP
+  // High-reliability URL for Windows FFmpeg
   const ffmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip';
-  
-  try {
-    console.log(`Downloading FFmpeg for Windows from: ${ffmpegUrl}`);
-    await downloadFile(ffmpegUrl, zipPath);
-    console.log('Download complete. Extracting...');
 
-    // Ensure extraction directory exists
-    if (!fs.existsSync(extractPath)) {
-      await fsPromises.mkdir(extractPath, { recursive: true });
+  try {
+    if (!fs.existsSync(binDir)) {
+      await fsPromises.mkdir(binDir, { recursive: true });
     }
 
-    // Use PowerShell to extract ZIP (Native Windows tool, no external deps required)
-    const psCommand = `powershell.exe -NoProfile -InputFormat None -ExecutionPolicy Bypass -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractPath}' -Force"`;
+    console.log('Starting FFmpeg Auto-Download...');
+    await downloadFile(ffmpegUrl, zipPath);
+    
+    console.log('Extraction starting (this may take a moment)...');
+    const psCommand = `powershell.exe -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractPath}' -Force"`;
     
     await new Promise((resolve, reject) => {
-      exec(psCommand, (error, stdout, stderr) => {
-        if (error) {
-          console.error('PowerShell extraction failed:', stderr);
-          reject(error);
-        } else {
-          resolve();
-        }
-      });
+      exec(psCommand, (error) => (error ? reject(error) : resolve()));
     });
 
-    console.log('Extraction complete. Locating ffmpeg.exe...');
-
-    // Find ffmpeg.exe in the extracted folder structure
+    console.log('Locating ffmpeg.exe in extracted files...');
     const ffmpegSource = await findFileRecursively(extractPath, 'ffmpeg.exe');
     const ffmpegDest = getFFmpegPath();
 
     if (ffmpegSource) {
-      // Copy to final destination
       await fsPromises.copyFile(ffmpegSource, ffmpegDest);
-      console.log(`FFmpeg installed successfully to: ${ffmpegDest}`);
+      console.log(`✅ FFmpeg successfully installed to: ${ffmpegDest}`);
     } else {
-      throw new Error('ffmpeg.exe not found in downloaded archive');
+      throw new Error('ffmpeg.exe not found in extracted archive.');
     }
-
   } catch (error) {
-    console.error('FFmpeg installation failed:', error.message);
-    // Cleanup on fail
-    try {
-      if (fs.existsSync(zipPath)) await fsPromises.unlink(zipPath);
-      if (fs.existsSync(extractPath)) await fsPromises.rm(extractPath, { recursive: true, force: true });
-    } catch (e) { /* ignore cleanup errors */ }
+    console.error('❌ Installation failed:', error.message);
     throw error;
   } finally {
-    // Always cleanup temp files on success
+    // Cleanup temporary files
     try {
-      if (fs.existsSync(zipPath)) await fsPromises.unlink(zipPath);
-      if (fs.existsSync(extractPath)) await fsPromises.rm(extractPath, { recursive: true, force: true });
+      if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+      if (fs.existsSync(extractPath)) fs.rmSync(extractPath, { recursive: true, force: true });
     } catch (e) {
-      console.log('Warning: Could not clean up temporary files:', e.message);
+      // Ignore cleanup errors
     }
   }
 }
 
-// Install FFmpeg wrapper
 async function installFFmpeg() {
-  const binDir = path.resolve(__dirname, '..', 'bin');
   const platform = os.platform();
-  
-  console.log('Starting FFmpeg auto-installation...');
-  
-  try {
-    // Ensure bin directory exists
-    await fsPromises.mkdir(binDir, { recursive: true });
-    
-    if (platform === 'win32') {
-      await downloadFFmpegWindows();
-    } else {
-      // For Linux/Mac, we still recommend manual install, but we can try to download a static binary if needed.
-      // For now, consistent with your original code, we warn the user.
-      console.warn('Auto-install is primarily supported for Windows. Please install FFmpeg manually.');
-      console.warn('MacOS: brew install ffmpeg');
-      console.warn('Linux: sudo apt install ffmpeg');
-      throw new Error(`Auto-install not fully supported on ${platform}`);
-    }
-    
-  } catch (error) {
-    console.error('Error installing FFmpeg:', error);
-    // We do NOT create a dummy file here anymore, because a 0-byte exe causes more confusion.
-    // We let the error propagate so the application knows it's missing.
-    throw error;
+  if (platform === 'win32') {
+    await downloadFFmpegWindows();
+  } else {
+    throw new Error(`Auto-install not supported on ${platform}. Please install FFmpeg manually using your package manager.`);
   }
 }
 

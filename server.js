@@ -10,12 +10,10 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-const corsOptions = {
-  origin: process.env.FRONTEND_URL || ['http://localhost:3000'],
-  credentials: true
-};
-app.use(cors(corsOptions));
-app.use(express.json({ limit: '50mb' }));
+app.use(cors({
+  origin: 'http://localhost:3000'
+}));
+app.use(express.json());
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Import helper functions
@@ -117,17 +115,17 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
         console.log('FFmpeg installation completed');
       } catch (installError) {
         console.error('Error during FFmpeg installation:', installError);
-        return res.status(500).json({ 
+        return res.status(500).json({
           error: "FFmpeg not found and auto-install failed. Please install FFmpeg manually.\n" +
-                 "Download from https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-essentials.7z (Windows x64)\n" +
-                 "Extract ffmpeg.exe to backend/bin/ directory."
+            "Download from https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-essentials.7z (Windows x64)\n" +
+            "Extract ffmpeg.exe to backend/bin/ directory."
         });
       }
     }
-    
+
     if (!isWhisperInstalledSync()) {
       console.log('Whisper binary not found. Attempting to install...');
-      
+
       try {
         // Dynamically import and run the installation function
         const { installWhisper } = require('./utils/whisperInstaller');
@@ -135,50 +133,50 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
         console.log('Whisper installation completed');
       } catch (installError) {
         console.error('Error during Whisper installation:', installError);
-        return res.status(500).json({ 
+        return res.status(500).json({
           error: "Whisper binary not found and auto-install failed. Please install manually.\n" +
-                 "Download from https://github.com/ggerganov/whisper.cpp/releases (Windows x64)\n" +
-                 "Extract whisper.exe to backend/bin/ directory."
+            "Download from https://github.com/ggerganov/whisper.cpp/releases (Windows x64)\n" +
+            "Extract whisper.exe to backend/bin/ directory."
         });
       }
     }
-    
+
     if (!isModelAvailableSync()) {
       console.log('Whisper model not found. Attempting to download ggml-small.bin...');
-      
+
       try {
         const modelPath = require('./utils/whisperInstaller').getWhisperModelPath();
         const modelDir = path.dirname(modelPath);
-        
+
         await fs.mkdir(modelDir, { recursive: true });
-        
+
         // Download the actual model file
         const axios = require('axios');
-        
+
         // Try to download the ggml-small.bin model
         const modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin';
         const writer = require('fs').createWriteStream(modelPath);
-        
+
         const response = await axios({
           method: 'GET',
           url: modelUrl,
           responseType: 'stream'
         });
-        
+
         response.data.pipe(writer);
-        
+
         await new Promise((resolve, reject) => {
           writer.on('finish', resolve);
           writer.on('error', reject);
         });
-        
+
         console.log('Model downloaded successfully');
       } catch (modelError) {
         console.error('Error downloading model:', modelError);
-        return res.status(500).json({ 
+        return res.status(500).json({
           error: "Whisper model not found and download failed. Please download ggml-small.bin manually.\n" +
-                 "Download from https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin\n" +
-                 "Save as backend/models/ggml-small.bin"
+            "Download from https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin\n" +
+            "Save as backend/models/ggml-small.bin"
         });
       }
     }
@@ -205,14 +203,14 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       } catch (cleanupError) {
         console.warn('Error cleaning up input file:', cleanupError.message);
       }
-      
+
       // Return empty transcription result when binaries fail
       const emptyTranscription = {
         text: "",
         duration: 0,
         segments: []
       };
-      
+
       return res.json(emptyTranscription);
     }
 
@@ -232,17 +230,17 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       } catch (cleanupError) {
         console.warn('Error cleaning up files:', cleanupError.message);
       }
-      
+
       // Return empty transcription result when binaries fail
       const emptyTranscription = {
         text: "",
         duration: 0,
         segments: []
       };
-      
+
       return res.json(emptyTranscription);
     }
-    
+
     // Find a working Whisper binary (try whisper.exe then main.exe on Windows)
     const whisperCandidates = getWhisperBinaryPathCandidates();
     let whisperPath = null;
@@ -312,32 +310,32 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
             // If no JSON found in stdout, create a basic structure with the transcription text
             // Clean up Whisper CLI output (remove model loading info, timing stats, etc.)
             let cleanOutput = whisperOutput;
-            
+
             // Remove lines containing Whisper CLI output patterns
             const lines = cleanOutput.split('\n');
-            const cleanLines = lines.filter(line => 
-                !line.includes('whisper_') && 
-                !line.includes('system_info:') && 
-                !line.includes('main:') && 
-                !line.includes('output_json:') && 
-                !line.includes('whisper_print_timings:') &&
-                !line.includes('loading model') &&
-                !line.includes('use gpu') &&
-                !line.includes('CPU total size') &&
-                !line.includes('ftype=') &&
-                !line.includes('n_vocab=') &&
-                !line.includes('n_audio_ctx=') &&
-                !line.includes('n_text_ctx=') &&
-                !line.includes('model size') &&
-                !line.includes('kvself size') &&
-                !line.includes('compute buffer') &&
-                !line.includes('total time') &&
-                !line.includes('load time') &&
-                !line.includes('mel time') &&
-                !line.includes('encode time') &&
-                !line.includes('decode time')
+            const cleanLines = lines.filter(line =>
+              !line.includes('whisper_') &&
+              !line.includes('system_info:') &&
+              !line.includes('main:') &&
+              !line.includes('output_json:') &&
+              !line.includes('whisper_print_timings:') &&
+              !line.includes('loading model') &&
+              !line.includes('use gpu') &&
+              !line.includes('CPU total size') &&
+              !line.includes('ftype=') &&
+              !line.includes('n_vocab=') &&
+              !line.includes('n_audio_ctx=') &&
+              !line.includes('n_text_ctx=') &&
+              !line.includes('model size') &&
+              !line.includes('kvself size') &&
+              !line.includes('compute buffer') &&
+              !line.includes('total time') &&
+              !line.includes('load time') &&
+              !line.includes('mel time') &&
+              !line.includes('encode time') &&
+              !line.includes('decode time')
             );
-            
+
             const transcriptionText = cleanLines.join(' ').replace(/\[\d+:\d+:\d+\.\d+ --> \d+:\d+:\d+\.\d+\]\s*/g, '').replace(/\s+/g, ' ').trim();
             if (transcriptionText) {
               const transcriptionObj = {
@@ -358,7 +356,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
         }
       }
     }
-    
+
     if (!jsonPath) {
       console.warn('Whisper transcription failed (no output file and no stdout output)');
       try {
@@ -371,11 +369,11 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       return res.status(500).json({
         error: usedMain
           ? "The installed Whisper binary (main.exe) is a deprecation stub and does not transcribe.\n\n" +
-            "Download a working CLI:\n" +
-            "1. Go to https://github.com/ggml-org/whisper.cpp/releases or https://github.com/dscripka/whisper.cpp_binaries/releases\n" +
-            "2. Download a Windows x64 build (e.g. whisper-bin-x64.zip) that includes whisper-cli.exe\n" +
-            "3. Extract whisper-cli.exe into your backend/bin/ folder\n" +
-            "4. Restart the backend and try again."
+          "Download a working CLI:\n" +
+          "1. Go to https://github.com/ggml-org/whisper.cpp/releases or https://github.com/dscripka/whisper.cpp_binaries/releases\n" +
+          "2. Download a Windows x64 build (e.g. whisper-bin-x64.zip) that includes whisper-cli.exe\n" +
+          "3. Extract whisper-cli.exe into your backend/bin/ folder\n" +
+          "4. Restart the backend and try again."
           : "Whisper produced no output file. Ensure backend/bin/ has a working whisper-cli.exe (see ggml-org/whisper.cpp releases)."
       });
     }
@@ -390,18 +388,18 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       try {
         await fs.unlink(inputPath);
         await fs.unlink(wavPath);
-        await fs.unlink(jsonPath).catch(() => {});
+        await fs.unlink(jsonPath).catch(() => { });
       } catch (cleanupError) {
         console.warn('Error cleaning up files:', cleanupError.message);
       }
-      
+
       // Return empty transcription result when binaries fail
       const emptyTranscription = {
         text: "",
         duration: 0,
         segments: []
       };
-      
+
       return res.json(emptyTranscription);
     }
 
@@ -409,7 +407,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     try {
       await fs.unlink(inputPath);
       await fs.unlink(wavPath);
-      await fs.unlink(jsonPath).catch(() => {});
+      await fs.unlink(jsonPath).catch(() => { });
     } catch (cleanupError) {
       console.warn('Error cleaning up files:', cleanupError.message);
     }
@@ -421,7 +419,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     } else {
       fullText = (transcription.text || '').replace(/\s+/g, ' ').trim();
     }
-    
+
     res.json({
       text: fullText,
       segments: transcription.transcription || [],
@@ -429,7 +427,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     });
   } catch (error) {
     console.error("Transcription error:", error);
-    
+
     // Clean up uploaded file if it exists
     if (req.file && req.file.path) {
       try {
