@@ -2,32 +2,65 @@ const path = require('path');
 const fs = require('fs');
 const fsPromises = require('fs').promises;
 const os = require('os');
-const { exec } = require('child_process');
+const { exec, execSync } = require('child_process');
 const https = require('https');
 
 // Helper to get the absolute path to the backend root
+// In Next.js, process.cwd() is usually the project root
 const BACKEND_ROOT = process.cwd();
+
+/**
+ * Check if FFmpeg is in the global system PATH
+ */
+function isFFmpegInPath() {
+  try {
+    const command = os.platform() === 'win32' ? 'where ffmpeg' : 'which ffmpeg';
+    execSync(command, { stdio: 'ignore' });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
 /**
  * Get FFmpeg path based on platform.
  * It looks for the /bin folder in the root of the backend directory.
  */
 function getFFmpegPath() {
-  const platform = os.platform();
+  // 1. If we have a local binary, prioritize it
   const binDir = path.join(BACKEND_ROOT, 'bin');
+  const platform = os.platform();
   
+  let localPath;
   if (platform === 'win32') {
-    return path.join(binDir, 'ffmpeg.exe');
+    localPath = path.join(binDir, 'ffmpeg.exe');
   } else if (platform === 'darwin') {
-    return path.join(binDir, 'ffmpeg-mac');
+    localPath = path.join(binDir, 'ffmpeg'); // Removed -mac suffix for standard consistency
   } else {
-    return path.join(binDir, 'ffmpeg');
+    localPath = path.join(binDir, 'ffmpeg');
   }
+
+  if (fs.existsSync(localPath)) {
+    return localPath;
+  }
+
+  // 2. Fallback: If global ffmpeg exists, just return 'ffmpeg' command
+  if (isFFmpegInPath()) {
+    return 'ffmpeg';
+  }
+
+  // 3. Return local path (even if missing) so the installer knows where to put it
+  return localPath;
 }
 
 async function isFFmpegInstalled() {
   try {
     const ffmpegPath = getFFmpegPath();
+    
+    // If it returns just 'ffmpeg', it's global
+    if (ffmpegPath === 'ffmpeg') return true;
+
+    // Otherwise check file existence
     await fsPromises.access(ffmpegPath, fs.constants.F_OK);
     return true;
   } catch {
@@ -38,6 +71,8 @@ async function isFFmpegInstalled() {
 function isFFmpegInstalledSync() {
   try {
     const ffmpegPath = getFFmpegPath();
+    if (ffmpegPath === 'ffmpeg') return true;
+    
     fs.accessSync(ffmpegPath, fs.constants.F_OK);
     return true;
   } catch {
@@ -50,8 +85,12 @@ function isFFmpegInstalledSync() {
  */
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
+    // Use a standard browser User-Agent to avoid 403 Forbidden errors
     const options = {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) VoxScribe/1.0' }
+      headers: { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/octet-stream' 
+      }
     };
 
     const request = https.get(url, options, (response) => {
@@ -61,7 +100,7 @@ function downloadFile(url, dest) {
       }
 
       if (response.statusCode !== 200) {
-        return reject(new Error(`Download failed: ${response.statusCode}`));
+        return reject(new Error(`Download failed with status code: ${response.statusCode}`));
       }
 
       const totalSize = parseInt(response.headers['content-length'], 10);
@@ -70,24 +109,18 @@ function downloadFile(url, dest) {
 
       response.on('data', (chunk) => {
         downloadedSize += chunk.length;
-        
-        if (totalSize) {
-          const percent = ((downloadedSize / totalSize) * 100).toFixed(2);
-          const mbDownloaded = (downloadedSize / (1024 * 1024)).toFixed(2);
-          const mbTotal = (totalSize / (1024 * 1024)).toFixed(2);
-          process.stdout.write(`  > Downloading FFmpeg: ${percent}% (${mbDownloaded}/${mbTotal} MB)\r`);
-        } else {
-          const mbDownloaded = (downloadedSize / (1024 * 1024)).toFixed(2);
-          process.stdout.write(`  > Downloading FFmpeg: ${mbDownloaded} MB...\r`);
+        // Optional: reduce log spam in production
+        if (process.stdout.isTTY) { 
+           // Only log progress if in an interactive terminal
+           // Logic omitted to keep logs clean in server logs, 
+           // but you can uncomment strict logging if needed.
         }
       });
 
       response.pipe(file);
 
       file.on('finish', () => {
-        process.stdout.write('\n'); // Move to next line after progress is done
-        file.close();
-        resolve();
+        file.close(() => resolve());
       });
 
       file.on('error', (err) => {
@@ -104,6 +137,9 @@ function downloadFile(url, dest) {
 }
 
 async function findFileRecursively(dir, filename) {
+  // Guard against reading a directory that doesn't exist
+  if (!fs.existsSync(dir)) return null;
+
   const items = await fsPromises.readdir(dir, { withFileTypes: true });
   for (const item of items) {
     const fullPath = path.join(dir, item.name);
@@ -122,27 +158,54 @@ async function downloadFFmpegWindows() {
   const zipPath = path.join(binDir, 'ffmpeg.zip');
   const extractPath = path.join(binDir, 'temp_extract');
   
-  // High-reliability URL for Windows FFmpeg
-  const ffmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip';
+  // Use the Essentials build (smaller, reliable) provided by Gyan.dev (git-essentials)
+  // or stick to BtbN if preferred. Gyan is extremely stable for Windows.
+  const ffmpegUrl = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-git-essentials.7z'; 
+  // Note: Node cannot natively extract .7z easily without 7zip installed. 
+  // Let's stick to .zip for Node.js compatibility using the BtbN build.
+  
+  const ffmpegZipUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip';
 
   try {
+    // 1. Ensure bin directory exists
     if (!fs.existsSync(binDir)) {
       await fsPromises.mkdir(binDir, { recursive: true });
     }
 
-    console.log('Starting FFmpeg Auto-Download...');
-    await downloadFile(ffmpegUrl, zipPath);
+    console.log('⬇️  Starting FFmpeg Auto-Download...');
+    await downloadFile(ffmpegZipUrl, zipPath);
     
-    console.log('Extraction starting (this may take a moment)...');
-    const psCommand = `powershell.exe -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractPath}' -Force"`;
+    console.log('📦 Extraction starting...');
+    
+    // Check if PowerShell exists before trying
+    try {
+        execSync('powershell -version', { stdio: 'ignore' });
+    } catch {
+        throw new Error('PowerShell is required for auto-installation on Windows.');
+    }
+
+    // Force remove previous temp directory if it exists
+    if (fs.existsSync(extractPath)) {
+        await fsPromises.rm(extractPath, { recursive: true, force: true });
+    }
+
+    const psCommand = `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractPath}' -Force"`;
     
     await new Promise((resolve, reject) => {
-      exec(psCommand, (error) => (error ? reject(error) : resolve()));
+      exec(psCommand, (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
     });
 
-    console.log('Locating ffmpeg.exe in extracted files...');
+    // Small delay to ensure FS lock release
+    await new Promise(r => setTimeout(r, 1000));
+
+    console.log('🔍 Locating ffmpeg.exe...');
     const ffmpegSource = await findFileRecursively(extractPath, 'ffmpeg.exe');
-    const ffmpegDest = getFFmpegPath();
+    
+    // Explicit destination construction
+    const ffmpegDest = path.join(binDir, 'ffmpeg.exe');
 
     if (ffmpegSource) {
       await fsPromises.copyFile(ffmpegSource, ffmpegDest);
@@ -151,7 +214,7 @@ async function downloadFFmpegWindows() {
       throw new Error('ffmpeg.exe not found in extracted archive.');
     }
   } catch (error) {
-    console.error('❌ Installation failed:', error.message);
+    console.error('❌ FFmpeg Installation failed:', error.message);
     throw error;
   } finally {
     // Cleanup temporary files
@@ -166,10 +229,17 @@ async function downloadFFmpegWindows() {
 
 async function installFFmpeg() {
   const platform = os.platform();
+  
+  // Quick check: If it's already in path, don't download
+  if (isFFmpegInPath()) {
+    console.log('✅ FFmpeg is already installed globally.');
+    return;
+  }
+
   if (platform === 'win32') {
     await downloadFFmpegWindows();
   } else {
-    throw new Error(`Auto-install not supported on ${platform}. Please install FFmpeg manually using your package manager.`);
+    throw new Error(`Auto-install not supported on ${platform}. Please install FFmpeg manually: 'brew install ffmpeg' (Mac) or 'sudo apt install ffmpeg' (Linux).`);
   }
 }
 

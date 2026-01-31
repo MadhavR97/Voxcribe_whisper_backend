@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const os = require('os');
 const { exec } = require('child_process');
 const PDFDocument = require('pdfkit');
@@ -10,9 +11,8 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors({
-  origin: 'http://localhost:3000'
-}));
+// Allow all origins to avoid CORS issues during dev
+app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -22,9 +22,15 @@ const { isFFmpegInstalledSync, getFFmpegPath } = require('./utils/ffmpegInstalle
 const { LANGUAGES } = require('./constants/languages');
 
 // Multer for handling file uploads
+// Use system temp dir to avoid triggering nodemon restarts when files are uploaded
+const UPLOADS_DIR = path.join(os.tmpdir(), 'voxscribe_uploads');
+const TEMP_DIR = path.join(os.tmpdir(), 'voxscribe_temp');
+
 const multer = require('multer');
 const storage = multer.diskStorage({
-  destination: './uploads/',
+  destination: (req, file, cb) => {
+    cb(null, UPLOADS_DIR);
+  },
   filename: (req, file, cb) => {
     cb(null, Date.now() + '-' + file.originalname);
   }
@@ -34,8 +40,9 @@ const upload = multer({ storage });
 // Ensure required directories exist
 async function initializeDirectories() {
   try {
-    await fs.mkdir('./uploads', { recursive: true });
-    await fs.mkdir('./temp', { recursive: true });
+    await fs.mkdir(UPLOADS_DIR, { recursive: true });
+    await fs.mkdir(TEMP_DIR, { recursive: true });
+    console.log(`Storage initialized at: ${UPLOADS_DIR} and ${TEMP_DIR}`);
   } catch (error) {
     console.error('Error initializing directories:', error);
   }
@@ -135,8 +142,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
         console.error('Error during Whisper installation:', installError);
         return res.status(500).json({
           error: "Whisper binary not found and auto-install failed. Please install manually.\n" +
-            "Download from https://github.com/ggerganov/whisper.cpp/releases (Windows x64)\n" +
-            "Extract whisper.exe to backend/bin/ directory."
+            "For Linux/Mac, ensure 'make' and 'tar' are installed."
         });
       }
     }
@@ -155,7 +161,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
         // Try to download the ggml-small.bin model
         const modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin';
-        const writer = require('fs').createWriteStream(modelPath);
+        const writer = fsSync.createWriteStream(modelPath);
 
         const response = await axios({
           method: 'GET',
@@ -182,14 +188,16 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     }
 
     const inputPath = req.file.path;
-    const tempDir = './temp';
     const timestamp = Date.now();
     const baseName = `${timestamp}`;
     const outputFileName = `${baseName}_transcription.json`;
-    const outputPath = path.join(tempDir, outputFileName);
+    
+    // Use the system temp dir for processing files
+    const outputBasePath = path.join(TEMP_DIR, baseName);
+    const wavPath = path.join(TEMP_DIR, `${baseName}.wav`);
+    const defaultJsonPath = `${outputBasePath}.json`;
 
     // Convert audio to WAV if needed
-    const wavPath = path.join(tempDir, `${baseName}.wav`);
     try {
       await execAsync(
         `"${ffmpegPath}" -i "${inputPath}" -ar 16000 -ac 1 -b:a 128k "${wavPath}"`,
@@ -244,7 +252,6 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     // Find a working Whisper binary (try whisper.exe then main.exe on Windows)
     const whisperCandidates = getWhisperBinaryPathCandidates();
     let whisperPath = null;
-    const fsSync = require('fs');
     for (const candidate of whisperCandidates) {
       try {
         if (!fsSync.existsSync(candidate)) continue;
@@ -272,8 +279,6 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
 
     // Run whisper transcription (whisper.cpp main: input file first so -oj isn't given the wav path)
     // Whisper CLI may output to stdout instead of file; handle both cases
-    const outputBasePath = path.join(path.resolve(tempDir), baseName);
-    const defaultJsonPath = `${outputBasePath}.json`;
     const wavPathAbs = path.resolve(wavPath);
     const modelPathAbs = path.resolve(modelPath);
     const wavFileName = path.basename(wavPath);
@@ -282,7 +287,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
       whisperOutput = await execAsyncAcceptOutput(
         `"${whisperPath}" "${wavFileName}" -m "${modelPathAbs}" -l ${language} -oj -of "${baseName}"`,
         "Running transcription",
-        { cwd: path.resolve(tempDir) }
+        { cwd: TEMP_DIR }
       );
     } catch (transcriptionError) {
       // Ignore exit code; check if output was actually written
@@ -533,4 +538,3 @@ initializeDirectories().then(() => {
 });
 
 module.exports = app;
-
