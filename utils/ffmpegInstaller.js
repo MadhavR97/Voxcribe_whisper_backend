@@ -13,16 +13,22 @@ const BACKEND_ROOT = process.cwd();
  * It looks for the /bin folder in the root of the backend directory.
  */
 function getFFmpegPath() {
-  const platform = os.platform();
-  const binDir = path.join(BACKEND_ROOT, 'bin');
-  
-  if (platform === 'win32') {
-    return path.join(binDir, 'ffmpeg.exe');
-  } else if (platform === 'darwin') {
-    return path.join(binDir, 'ffmpeg-mac');
-  } else {
-    return path.join(binDir, 'ffmpeg');
+  const isRender = process.env.RENDER || os.platform() === 'linux';
+  const binDir = path.join(process.cwd(), 'bin');
+  const ffmpegPath = isRender
+    ? path.join(binDir, 'ffmpeg')      // Linux (Render)
+    : path.join(binDir, 'ffmpeg.exe'); // Local Windows
+
+  // Fix for Linux: Ensure the file is executable
+  if (isRender && fs.existsSync(ffmpegPath)) {
+    try {
+      fs.chmodSync(ffmpegPath, '755');
+    } catch (err) {
+      console.warn("Could not set executable permissions:", err.message);
+    }
   }
+
+  return ffmpegPath;
 }
 
 async function isFFmpegInstalled() {
@@ -70,7 +76,7 @@ function downloadFile(url, dest) {
 
       response.on('data', (chunk) => {
         downloadedSize += chunk.length;
-        
+
         if (totalSize) {
           const percent = ((downloadedSize / totalSize) * 100).toFixed(2);
           const mbDownloaded = (downloadedSize / (1024 * 1024)).toFixed(2);
@@ -91,13 +97,13 @@ function downloadFile(url, dest) {
       });
 
       file.on('error', (err) => {
-        fs.unlink(dest, () => {});
+        fs.unlink(dest, () => { });
         reject(err);
       });
     });
 
     request.on('error', (err) => {
-      fs.unlink(dest, () => {});
+      fs.unlink(dest, () => { });
       reject(err);
     });
   });
@@ -121,7 +127,7 @@ async function downloadFFmpegWindows() {
   const binDir = path.join(BACKEND_ROOT, 'bin');
   const zipPath = path.join(binDir, 'ffmpeg.zip');
   const extractPath = path.join(binDir, 'temp_extract');
-  
+
   // High-reliability URL for Windows FFmpeg
   const ffmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip';
 
@@ -132,10 +138,10 @@ async function downloadFFmpegWindows() {
 
     console.log('Starting FFmpeg Auto-Download...');
     await downloadFile(ffmpegUrl, zipPath);
-    
+
     console.log('Extraction starting (this may take a moment)...');
     const psCommand = `powershell.exe -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractPath}' -Force"`;
-    
+
     await new Promise((resolve, reject) => {
       exec(psCommand, (error) => (error ? reject(error) : resolve()));
     });
