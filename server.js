@@ -111,6 +111,7 @@ app.post('/api/transcribe', upload.single('file'), async (req, res) => {
     // Get paths for executables (try whisper.exe then main.exe on Windows)
     const modelPath = getWhisperModelPath();
     const ffmpegPath = getFFmpegPath();
+    console.log(`Using FFmpeg path: ${ffmpegPath}`);
 
     // Check if executables exist and install if missing
     if (!isFFmpegInstalledSync()) {
